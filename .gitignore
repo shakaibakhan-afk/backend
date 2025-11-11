@@ -1,0 +1,21 @@
+# Virtual env
+instagram_env/
+venv/
+.venv
+
+__pycache__/
+*.pyc
+
+# Env files
+.env
+
+# Media/uploads
+media/
+
+# Logs/DB
+db.sqlite3
+*.log
+
+.bak
+.dat
+.dir
