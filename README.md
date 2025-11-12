@@ -10,7 +10,7 @@ A full-featured Instagram clone backend built with FastAPI, SQLAlchemy, and JWT 
 - Like and unlike posts
 - Comment on posts
 - Follow/unfollow users
-- Stories (24-hour expiry)
+
 - Real-time notifications
 - User search
 
