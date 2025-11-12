@@ -9,12 +9,14 @@ class Comment(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     post_id = Column(Integer, ForeignKey("posts.id"), nullable=False, index=True)
+    parent_id = Column(Integer, ForeignKey("comments.id"), nullable=True, index=True)  # For replies
     text = Column(Text, nullable=False)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     
     # Relationships
     user = relationship("User", back_populates="comments")
     post = relationship("Post", back_populates="comments")
+    parent = relationship("Comment", remote_side=[id], backref="replies")  # Self-referential for replies
 
 class Like(Base):
     __tablename__ = "likes"
@@ -51,7 +53,8 @@ class Story(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    image = Column(String(500), nullable=False)
+    image = Column(String(500), nullable=False)  # Now stores both images and videos
+    media_type = Column(String(10), nullable=False, default="image")  # "image" or "video"
     caption = Column(Text, nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)  # Stories expire after 24 hours

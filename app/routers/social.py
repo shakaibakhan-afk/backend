@@ -20,7 +20,7 @@ from app.schemas.social import (
     StoryCreate,
     StoryResponse
 )
-from app.utils.file_upload import save_upload_file, delete_file
+from app.utils.file_upload import save_upload_file, save_media_file, delete_file
 
 router = APIRouter()
 
@@ -31,34 +31,93 @@ def create_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Create a comment on a post"""
+    """Create a comment on a post (only if from followed user or own post)"""
     # Check if post exists
     post = db.query(Post).filter(Post.id == comment_data.post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     
+    # Check if user is authorized to comment on this post
+    # User can comment if: 1) It's their own post, or 2) They follow the post owner
+    if post.user_id != current_user.id:
+        is_following = db.query(Follow).filter(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == post.user_id
+        ).first()
+        
+        if not is_following:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only comment on posts from users you follow"
+            )
+    
+    # If parent_id is provided, validate it's a top-level comment (no nested replies beyond 1 level)
+    if comment_data.parent_id:
+        parent_comment = db.query(Comment).filter(Comment.id == comment_data.parent_id).first()
+        if not parent_comment:
+            raise HTTPException(status_code=404, detail="Parent comment not found")
+        
+        # Check if parent comment belongs to the same post
+        if parent_comment.post_id != comment_data.post_id:
+            raise HTTPException(status_code=400, detail="Parent comment does not belong to this post")
+        
+        # Ensure parent comment is not itself a reply (only 1 level of nesting)
+        if parent_comment.parent_id is not None:
+            raise HTTPException(status_code=400, detail="Cannot reply to a reply. Only 1 level of nesting allowed")
+        
+        # Check if user has already replied to this comment (strictly one reply per user per comment)
+        existing_reply = db.query(Comment).filter(
+            Comment.parent_id == comment_data.parent_id,
+            Comment.user_id == current_user.id
+        ).first()
+        
+        if existing_reply:
+            raise HTTPException(
+                status_code=400, 
+                detail="You have already replied to this comment. Only one reply per comment is allowed."
+            )
+    
     # Create comment
     db_comment = Comment(
         user_id=current_user.id,
         post_id=comment_data.post_id,
+        parent_id=comment_data.parent_id,
         text=comment_data.text
     )
     db.add(db_comment)
     db.commit()
     db.refresh(db_comment)
     
-    # Create notification for post owner
-    if post.user_id != current_user.id:
-        from app.models.notification import Notification
-        notification = Notification(
-            recipient_id=post.user_id,
-            sender_id=current_user.id,
-            notification_type="comment",
-            message=f"{current_user.username} commented on your post",
-            post_id=post.id
-        )
-        db.add(notification)
-        db.commit()
+    # Create notification
+    if comment_data.parent_id:
+        # Notify the parent comment owner
+        parent_comment = db.query(Comment).filter(Comment.id == comment_data.parent_id).first()
+        if parent_comment.user_id != current_user.id:
+            from app.models.notification import Notification
+            notification = Notification(
+                recipient_id=parent_comment.user_id,
+                sender_id=current_user.id,
+                notification_type="reply",
+                message=f"{current_user.username} replied to your comment",
+                post_id=post.id,
+                comment_id=db_comment.id
+            )
+            db.add(notification)
+            db.commit()
+    else:
+        # Notify post owner
+        if post.user_id != current_user.id:
+            from app.models.notification import Notification
+            notification = Notification(
+                recipient_id=post.user_id,
+                sender_id=current_user.id,
+                notification_type="comment",
+                message=f"{current_user.username} commented on your post",
+                post_id=post.id,
+                comment_id=db_comment.id
+            )
+            db.add(notification)
+            db.commit()
     
     return get_comment_with_details(db_comment, db)
 
@@ -68,8 +127,32 @@ def get_post_comments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Get all comments for a post"""
-    comments = db.query(Comment).filter(Comment.post_id == post_id).order_by(Comment.timestamp).all()
+    """Get all comments for a post (only if from followed user or own post)"""
+    # Check if post exists
+    post = db.query(Post).filter(Post.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    # Check if user is authorized to view comments on this post
+    # User can view if: 1) It's their own post, or 2) They follow the post owner
+    if post.user_id != current_user.id:
+        is_following = db.query(Follow).filter(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == post.user_id
+        ).first()
+        
+        if not is_following:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only view comments on posts from users you follow"
+            )
+    
+    # Get only top-level comments (parent_id is None)
+    comments = db.query(Comment).filter(
+        Comment.post_id == post_id,
+        Comment.parent_id == None
+    ).order_by(Comment.timestamp).all()
+    
     return [get_comment_with_details(comment, db) for comment in comments]
 
 @router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -99,11 +182,25 @@ def like_post(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Like a post"""
+    """Like a post (only if from followed user or own post)"""
     # Check if post exists
     post = db.query(Post).filter(Post.id == like_data.post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+    
+    # Check if user is authorized to like this post
+    # User can like if: 1) It's their own post, or 2) They follow the post owner
+    if post.user_id != current_user.id:
+        is_following = db.query(Follow).filter(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == post.user_id
+        ).first()
+        
+        if not is_following:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only like posts from users you follow"
+            )
     
     # Check if already liked
     existing_like = db.query(Like).filter(
@@ -164,7 +261,26 @@ def get_post_likes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Get users who liked a post"""
+    """Get users who liked a post (only if from followed user or own post)"""
+    # Check if post exists
+    post = db.query(Post).filter(Post.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    # Check if user is authorized to view likes on this post
+    # User can view if: 1) It's their own post, or 2) They follow the post owner
+    if post.user_id != current_user.id:
+        is_following = db.query(Follow).filter(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == post.user_id
+        ).first()
+        
+        if not is_following:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only view likes on posts from users you follow"
+            )
+    
     likes = db.query(Like).filter(Like.post_id == post_id).all()
     
     result = []
@@ -311,13 +427,13 @@ def get_following(
 @router.post("/stories", response_model=StoryResponse, status_code=status.HTTP_201_CREATED)
 async def create_story(
     caption: Optional[str] = Form(None),
-    image: UploadFile = File(...),
+    media: UploadFile = File(...),  # Changed from "image" to "media"
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Create a new story"""
-    # Save image
-    filename = await save_upload_file(image, "stories")
+    """Create a new story (image or video)"""
+    # Save media file (image or video)
+    filename, media_type = await save_media_file(media, "stories")
     
     # Stories expire after 24 hours
     expires_at = datetime.utcnow() + timedelta(hours=24)
@@ -325,7 +441,8 @@ async def create_story(
     # Create story
     db_story = Story(
         user_id=current_user.id,
-        image=filename,
+        image=filename,  # Column name is still "image" but stores both
+        media_type=media_type,  # "image" or "video"
         caption=caption,
         expires_at=expires_at
     )
@@ -346,12 +463,12 @@ def get_stories(
     following_ids = [fid[0] for fid in following_ids]
     following_ids.append(current_user.id)  # Include current user's stories
     
-    # Get active stories
+    # Get active stories (ordered oldest first, like Instagram)
     now = datetime.utcnow()
     stories = db.query(Story).filter(
         Story.user_id.in_(following_ids),
         Story.expires_at > now
-    ).order_by(desc(Story.timestamp)).all()
+    ).order_by(Story.timestamp).all()  # Oldest first
     
     return [get_story_with_details(story, db) for story in stories]
 
@@ -361,14 +478,53 @@ def get_user_stories(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Get active stories from a specific user"""
+    """Get active stories from a specific user (only if followed or own stories)"""
+    # Check if user is authorized to view this user's stories
+    # User can view if: 1) It's their own stories, or 2) They follow this user
+    if user_id != current_user.id:
+        is_following = db.query(Follow).filter(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == user_id
+        ).first()
+        
+        if not is_following:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only view stories from users you follow"
+            )
+    
     now = datetime.utcnow()
     stories = db.query(Story).filter(
         Story.user_id == user_id,
         Story.expires_at > now
-    ).order_by(desc(Story.timestamp)).all()
+    ).order_by(Story.timestamp).all()  # Oldest first
     
     return [get_story_with_details(story, db) for story in stories]
+
+@router.put("/stories/{story_id}", response_model=StoryResponse)
+def update_story(
+    story_id: int,
+    caption: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Update a story's caption"""
+    story = db.query(Story).filter(Story.id == story_id).first()
+    
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+    
+    if story.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to update this story")
+    
+    # Update caption
+    if caption is not None:
+        story.caption = caption
+    
+    db.commit()
+    db.refresh(story)
+    
+    return get_story_with_details(story, db)
 
 @router.delete("/stories/{story_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_story(
@@ -396,18 +552,49 @@ def delete_story(
 
 # Helper functions
 def get_comment_with_details(comment: Comment, db: Session):
-    """Get comment with user details"""
+    """Get comment with user details and replies"""
     user = db.query(User).filter(User.id == comment.user_id).first()
     profile = db.query(Profile).filter(Profile.user_id == comment.user_id).first()
+    
+    # Get replies (only if this is a top-level comment)
+    replies = []
+    replies_count = 0
+    if comment.parent_id is None:
+        reply_comments = db.query(Comment).filter(
+            Comment.parent_id == comment.id
+        ).order_by(Comment.timestamp).all()
+        
+        replies_count = len(reply_comments)
+        
+        # Build reply objects
+        for reply in reply_comments:
+            reply_user = db.query(User).filter(User.id == reply.user_id).first()
+            reply_profile = db.query(Profile).filter(Profile.user_id == reply.user_id).first()
+            
+            replies.append({
+                "id": reply.id,
+                "user_id": reply.user_id,
+                "post_id": reply.post_id,
+                "parent_id": reply.parent_id,
+                "text": reply.text,
+                "timestamp": reply.timestamp,
+                "username": reply_user.username if reply_user else None,
+                "user_profile_picture": reply_profile.profile_picture if reply_profile else None,
+                "replies": [],  # Replies don't have sub-replies
+                "replies_count": 0
+            })
     
     comment_dict = {
         "id": comment.id,
         "user_id": comment.user_id,
         "post_id": comment.post_id,
+        "parent_id": comment.parent_id,
         "text": comment.text,
         "timestamp": comment.timestamp,
         "username": user.username if user else None,
-        "user_profile_picture": profile.profile_picture if profile else None
+        "user_profile_picture": profile.profile_picture if profile else None,
+        "replies": replies,
+        "replies_count": replies_count
     }
     
     return CommentResponse(**comment_dict)
@@ -417,15 +604,28 @@ def get_story_with_details(story: Story, db: Session):
     user = db.query(User).filter(User.id == story.user_id).first()
     profile = db.query(Profile).filter(Profile.user_id == story.user_id).first()
     
+    # Build user info
+    user_info = None
+    if user:
+        user_info = {
+            "id": user.id,
+            "username": user.username,
+            "profile": {
+                "profile_picture": profile.profile_picture if profile else None,
+                "bio": profile.bio if profile else None,
+                "website": profile.website if profile else None
+            }
+        }
+    
     story_dict = {
         "id": story.id,
         "user_id": story.user_id,
         "image": story.image,
+        "media_type": getattr(story, 'media_type', 'image'),  # Add media_type with fallback
         "caption": story.caption,
         "timestamp": story.timestamp,
         "expires_at": story.expires_at,
-        "username": user.username if user else None,
-        "user_profile_picture": profile.profile_picture if profile else None
+        "user": user_info
     }
     
     return StoryResponse(**story_dict)

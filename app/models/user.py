@@ -44,7 +44,7 @@ class Profile(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     bio = Column(Text, nullable=True)
-    profile_picture = Column(String(500), nullable=True, default="default-avatar.jpg")
+    profile_picture = Column(String(500), nullable=True, default=None)
     website = Column(String(200), nullable=True)
     location = Column(String(100), nullable=True)
     birth_date = Column(DateTime, nullable=True)

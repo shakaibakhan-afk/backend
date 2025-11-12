@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 # Comment Schemas
@@ -8,17 +8,24 @@ class CommentBase(BaseModel):
 
 class CommentCreate(CommentBase):
     post_id: int
+    parent_id: Optional[int] = None  # For replies
 
 class CommentResponse(CommentBase):
     id: int
     user_id: int
     post_id: int
+    parent_id: Optional[int] = None
     timestamp: datetime
     username: Optional[str] = None
     user_profile_picture: Optional[str] = None
+    replies: List['CommentResponse'] = []  # Nested replies (1 level only)
+    replies_count: int = 0
     
     class Config:
         from_attributes = True
+
+# Update forward reference
+CommentResponse.model_rebuild()
 
 # Like Schemas
 class LikeCreate(BaseModel):
@@ -62,14 +69,22 @@ class StoryBase(BaseModel):
 class StoryCreate(StoryBase):
     pass
 
+class StoryUserInfo(BaseModel):
+    id: int
+    username: str
+    profile: Optional[dict] = None
+    
+    class Config:
+        from_attributes = True
+
 class StoryResponse(StoryBase):
     id: int
     user_id: int
     image: str
+    media_type: str = "image"  # "image" or "video"
     timestamp: datetime
     expires_at: datetime
-    username: Optional[str] = None
-    user_profile_picture: Optional[str] = None
+    user: Optional[StoryUserInfo] = None
     
     class Config:
         from_attributes = True

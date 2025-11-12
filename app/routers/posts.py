@@ -60,8 +60,20 @@ def get_posts(
     skip: int = 0,
     limit: int = 20
 ):
-    """Get all posts (feed)"""
-    posts = db.query(Post).filter(Post.is_published == True).order_by(desc(Post.timestamp)).offset(skip).limit(limit).all()
+    """Get posts from followed users only (personalized feed)"""
+    from app.models.social import Follow
+    
+    # Get users that current user follows
+    following_ids = db.query(Follow.following_id).filter(Follow.follower_id == current_user.id).all()
+    following_ids = [fid[0] for fid in following_ids]
+    following_ids.append(current_user.id)  # Include current user's posts
+    
+    # Only show posts from followed users
+    posts = db.query(Post).filter(
+        Post.user_id.in_(following_ids),
+        Post.is_published == True
+    ).order_by(desc(Post.timestamp)).offset(skip).limit(limit).all()
+    
     return [get_post_with_details(post, db, current_user.id) for post in posts]
 
 @router.get("/following", response_model=List[PostResponse])
@@ -92,10 +104,26 @@ def get_post(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Get a specific post"""
+    """Get a specific post (only if from followed user or own post)"""
+    from app.models.social import Follow
+    
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+    
+    # Check if user is authorized to view this post
+    # User can view if: 1) It's their own post, or 2) They follow the post owner
+    if post.user_id != current_user.id:
+        is_following = db.query(Follow).filter(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == post.user_id
+        ).first()
+        
+        if not is_following:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only view posts from users you follow"
+            )
     
     return get_post_with_details(post, db, current_user.id)
 
@@ -107,7 +135,23 @@ def get_user_posts(
     skip: int = 0,
     limit: int = 20
 ):
-    """Get posts by a specific user"""
+    """Get posts by a specific user (only if followed or own profile)"""
+    from app.models.social import Follow
+    
+    # Check if user is authorized to view this user's posts
+    # User can view if: 1) It's their own profile, or 2) They follow this user
+    if user_id != current_user.id:
+        is_following = db.query(Follow).filter(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == user_id
+        ).first()
+        
+        if not is_following:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only view posts from users you follow"
+            )
+    
     posts = db.query(Post).filter(
         Post.user_id == user_id,
         Post.is_published == True

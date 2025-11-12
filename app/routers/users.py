@@ -132,6 +132,17 @@ def get_current_user_info(current_user: User = Depends(get_current_active_user),
     """Get current user info"""
     return get_user_with_stats(current_user, db)
 
+@router.get("/", response_model=List[UserWithProfile])
+def get_all_users(
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_active_user),
+    skip: int = 0,
+    limit: int = 50
+):
+    """Get all users"""
+    users = db.query(User).filter(User.is_active == True).offset(skip).limit(limit).all()
+    return [get_user_with_stats(user, db, current_user.id) for user in users]
+
 @router.get("/{user_id}", response_model=UserWithProfile)
 def get_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     """Get user by ID"""
