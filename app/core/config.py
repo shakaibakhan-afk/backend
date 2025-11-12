@@ -5,10 +5,15 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./instagram_clone.db"
     
-    # JWT
-    SECRET_KEY: str = "your-secret-key-change-this-in-production"
+    # JWT - IMPORTANT: Change SECRET_KEY in production!
+    SECRET_KEY: str = "your-secret-key-change-this-in-production-use-long-random-string-min-32-chars"
+    REFRESH_SECRET_KEY: str = "your-refresh-secret-key-change-this-in-production-different-from-access"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # 30 minutes (short-lived)
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30  # 30 days (long-lived)
+    
+    # Security
+    BCRYPT_ROUNDS: int = 12  # Number of bcrypt rounds (higher = more secure but slower)
     
     # File Upload
     MAX_FILE_SIZE: int = 5 * 1024 * 1024  # 5MB

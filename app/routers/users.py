@@ -9,6 +9,8 @@ from app.core.security import (
     get_password_hash,
     verify_password,
     create_access_token,
+    create_refresh_token,
+    verify_refresh_token,
     get_current_active_user
 )
 from app.models.user import User, Profile
@@ -20,6 +22,7 @@ from app.schemas.user import (
     UserResponse,
     UserWithProfile,
     Token,
+    RefreshTokenRequest,
     ProfileUpdate,
     ProfileResponse
 )
@@ -59,13 +62,14 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(profile)
     
-    # Create token
+    # Create access and refresh tokens
     access_token = create_access_token(data={"sub": str(db_user.id)})
+    refresh_token = create_refresh_token(data={"sub": str(db_user.id)})
     
     # Get user with profile
     user_response = get_user_with_stats(db_user, db)
     
-    return Token(access_token=access_token, user=user_response)
+    return Token(access_token=access_token, refresh_token=refresh_token, user=user_response)
 
 @router.post("/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -85,13 +89,43 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
             detail="Inactive user"
         )
     
-    # Create token
+    # Create access and refresh tokens
     access_token = create_access_token(data={"sub": str(user.id)})
+    refresh_token = create_refresh_token(data={"sub": str(user.id)})
     
     # Get user with profile
     user_response = get_user_with_stats(user, db)
     
-    return Token(access_token=access_token, user=user_response)
+    return Token(access_token=access_token, refresh_token=refresh_token, user=user_response)
+
+@router.post("/refresh", response_model=Token)
+def refresh_access_token(refresh_data: RefreshTokenRequest, db: Session = Depends(get_db)):
+    """Refresh access token using refresh token"""
+    user_id = verify_refresh_token(refresh_data.refresh_token)
+    
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Get user
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive"
+        )
+    
+    # Create new access and refresh tokens
+    access_token = create_access_token(data={"sub": str(user.id)})
+    refresh_token = create_refresh_token(data={"sub": str(user.id)})
+    
+    # Get user with profile
+    user_response = get_user_with_stats(user, db)
+    
+    return Token(access_token=access_token, refresh_token=refresh_token, user=user_response)
 
 @router.get("/me", response_model=UserWithProfile)
 def get_current_user_info(current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)):

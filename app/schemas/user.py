@@ -55,6 +55,10 @@ class UserWithProfile(UserResponse):
 # Token Schema
 class Token(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     user: UserWithProfile
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
 
