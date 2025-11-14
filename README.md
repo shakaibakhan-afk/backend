@@ -46,6 +46,38 @@ The API will be available at:
 - Interactive API docs: http://localhost:8000/docs
 - Alternative API docs: http://localhost:8000/redoc
 
+## Background Workers (Celery)
+
+Some features (notifications, story cleanup) are processed asynchronously.  
+Start Redis (or whichever broker/backend you configured) and run:
+
+```bash
+# Terminal 1 – Celery worker
+celery -A celery_app worker --loglevel=info
+
+# Terminal 2 – Celery beat scheduler
+celery -A celery_app beat --loglevel=info
+```
+
+You can monitor tasks with Flower:
+
+```bash
+celery -A celery_app flower --port=5555
+```
+
+## Database Migrations (Alembic)
+
+Alembic is preconfigured. Typical workflow:
+
+```bash
+alembic revision --autogenerate -m "describe change"
+alembic upgrade head
+```
+
+See `alembic.ini` and `alembic/env.py` for details. The initial placeholder
+revision (`0001_prepare_base.py`) is provided so you can immediately capture the
+current schema.
+
 ## API Endpoints
 
 ### Authentication

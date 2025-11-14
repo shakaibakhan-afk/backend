@@ -61,4 +61,20 @@ class Story(Base):
     
     # Relationships
     user = relationship("User", back_populates="stories")
+    views = relationship("StoryView", back_populates="story", cascade="all, delete-orphan")
+
+
+class StoryView(Base):
+    __tablename__ = "story_views"
+    __table_args__ = (
+        UniqueConstraint('story_id', 'viewer_id', name='unique_story_view'),
+    )
+    
+    id = Column(Integer, primary_key=True, index=True)
+    story_id = Column(Integer, ForeignKey("stories.id", ondelete="CASCADE"), nullable=False, index=True)
+    viewer_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    viewed_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    story = relationship("Story", back_populates="views")
+    viewer = relationship("User", back_populates="story_views")
 

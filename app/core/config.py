@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     
     # Security
     BCRYPT_ROUNDS: int = 12  # Number of bcrypt rounds (higher = more secure but slower)
+
+    # Celery / background jobs
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
     
     # File Upload
     MAX_FILE_SIZE: int = 5 * 1024 * 1024  # 5MB

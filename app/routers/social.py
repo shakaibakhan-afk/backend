@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.core.security import get_current_active_user
 from app.models.user import User, Profile
 from app.models.post import Post
-from app.models.social import Comment, Like, Follow, Story
+from app.models.social import Comment, Like, Follow, Story, StoryView
 from app.schemas.social import (
     CommentCreate,
     CommentResponse,
@@ -18,9 +18,11 @@ from app.schemas.social import (
     FollowResponse,
     FollowerInfo,
     StoryCreate,
-    StoryResponse
+    StoryResponse,
+    StoryViewer
 )
 from app.utils.file_upload import save_upload_file, save_media_file, delete_file
+from app.tasks.notifications import create_notification
 
 router = APIRouter()
 
@@ -88,13 +90,12 @@ def create_comment(
     db.commit()
     db.refresh(db_comment)
     
-    # Create notification
+    # Create notification asynchronously with Celery
     if comment_data.parent_id:
         # Notify the parent comment owner
         parent_comment = db.query(Comment).filter(Comment.id == comment_data.parent_id).first()
         if parent_comment.user_id != current_user.id:
-            from app.models.notification import Notification
-            notification = Notification(
+            create_notification(
                 recipient_id=parent_comment.user_id,
                 sender_id=current_user.id,
                 notification_type="reply",
@@ -102,13 +103,10 @@ def create_comment(
                 post_id=post.id,
                 comment_id=db_comment.id
             )
-            db.add(notification)
-            db.commit()
     else:
         # Notify post owner
         if post.user_id != current_user.id:
-            from app.models.notification import Notification
-            notification = Notification(
+            create_notification(
                 recipient_id=post.user_id,
                 sender_id=current_user.id,
                 notification_type="comment",
@@ -116,8 +114,6 @@ def create_comment(
                 post_id=post.id,
                 comment_id=db_comment.id
             )
-            db.add(notification)
-            db.commit()
     
     return get_comment_with_details(db_comment, db)
 
@@ -220,18 +216,15 @@ def like_post(
     db.commit()
     db.refresh(db_like)
     
-    # Create notification for post owner
+    # Create notification for post owner asynchronously
     if post.user_id != current_user.id:
-        from app.models.notification import Notification
-        notification = Notification(
+        create_notification(
             recipient_id=post.user_id,
             sender_id=current_user.id,
             notification_type="like",
             message=f"{current_user.username} liked your post",
             post_id=post.id
         )
-        db.add(notification)
-        db.commit()
     
     return db_like
 
@@ -262,13 +255,10 @@ def get_post_likes(
     current_user: User = Depends(get_current_active_user)
 ):
     """Get users who liked a post (only if from followed user or own post)"""
-    # Check if post exists
     post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     
-    # Check if user is authorized to view likes on this post
-    # User can view if: 1) It's their own post, or 2) They follow the post owner
     if post.user_id != current_user.id:
         is_following = db.query(Follow).filter(
             Follow.follower_id == current_user.id,
@@ -281,25 +271,33 @@ def get_post_likes(
                 detail="You can only view likes on posts from users you follow"
             )
     
-    likes = db.query(Like).filter(Like.post_id == post_id).all()
-    
-    result = []
-    for like in likes:
-        user = db.query(User).filter(User.id == like.user_id).first()
-        profile = db.query(Profile).filter(Profile.user_id == user.id).first()
-        is_following = db.query(Follow).filter(
+    rows = (
+        db.query(User.id, User.username, Profile.profile_picture)
+        .join(Like, Like.user_id == User.id)
+        .outerjoin(Profile, Profile.user_id == User.id)
+        .filter(Like.post_id == post_id)
+        .all()
+    )
+
+    liked_user_ids = [row.id for row in rows]
+    following_lookup = set(
+        user_id for (user_id,) in db.query(Follow.following_id)
+        .filter(
             Follow.follower_id == current_user.id,
-            Follow.following_id == user.id
-        ).first() is not None
-        
-        result.append(FollowerInfo(
-            id=user.id,
-            username=user.username,
-            profile_picture=profile.profile_picture if profile else None,
-            is_following=is_following
-        ))
-    
-    return result
+            Follow.following_id.in_(liked_user_ids)
+        )
+        .all()
+    )
+
+    return [
+        FollowerInfo(
+            id=row.id,
+            username=row.username,
+            profile_picture=row.profile_picture,
+            is_following=row.id in following_lookup
+        )
+        for row in rows
+    ]
 
 # ============ FOLLOWS ============
 @router.post("/follows", response_model=FollowResponse, status_code=status.HTTP_201_CREATED)
@@ -336,16 +334,12 @@ def follow_user(
     db.commit()
     db.refresh(db_follow)
     
-    # Create notification
-    from app.models.notification import Notification
-    notification = Notification(
+    create_notification(
         recipient_id=follow_data.following_id,
         sender_id=current_user.id,
         notification_type="follow",
         message=f"{current_user.username} started following you"
     )
-    db.add(notification)
-    db.commit()
     
     return db_follow
 
@@ -376,25 +370,34 @@ def get_followers(
     current_user: User = Depends(get_current_active_user)
 ):
     """Get followers of a user"""
-    follows = db.query(Follow).filter(Follow.following_id == user_id).all()
-    
-    result = []
-    for follow in follows:
-        user = db.query(User).filter(User.id == follow.follower_id).first()
-        profile = db.query(Profile).filter(Profile.user_id == user.id).first()
-        is_following = db.query(Follow).filter(
+    rows = (
+        db.query(User.id, User.username, Profile.profile_picture)
+        .join(Follow, Follow.follower_id == User.id)
+        .outerjoin(Profile, Profile.user_id == User.id)
+        .filter(Follow.following_id == user_id)
+        .all()
+    )
+
+    follower_ids = [row.id for row in rows]
+    following_lookup = set(
+        following_id
+        for (following_id,) in db.query(Follow.following_id)
+        .filter(
             Follow.follower_id == current_user.id,
-            Follow.following_id == user.id
-        ).first() is not None
-        
-        result.append(FollowerInfo(
-            id=user.id,
-            username=user.username,
-            profile_picture=profile.profile_picture if profile else None,
-            is_following=is_following
-        ))
-    
-    return result
+            Follow.following_id.in_(follower_ids)
+        )
+        .all()
+    )
+
+    return [
+        FollowerInfo(
+            id=row.id,
+            username=row.username,
+            profile_picture=row.profile_picture,
+            is_following=row.id in following_lookup
+        )
+        for row in rows
+    ]
 
 @router.get("/following/{user_id}", response_model=List[FollowerInfo])
 def get_following(
@@ -403,25 +406,34 @@ def get_following(
     current_user: User = Depends(get_current_active_user)
 ):
     """Get users that a user is following"""
-    follows = db.query(Follow).filter(Follow.follower_id == user_id).all()
-    
-    result = []
-    for follow in follows:
-        user = db.query(User).filter(User.id == follow.following_id).first()
-        profile = db.query(Profile).filter(Profile.user_id == user.id).first()
-        is_following = db.query(Follow).filter(
+    rows = (
+        db.query(User.id, User.username, Profile.profile_picture)
+        .join(Follow, Follow.following_id == User.id)
+        .outerjoin(Profile, Profile.user_id == User.id)
+        .filter(Follow.follower_id == user_id)
+        .all()
+    )
+
+    following_ids = [row.id for row in rows]
+    mutual_lookup = set(
+        following_id
+        for (following_id,) in db.query(Follow.following_id)
+        .filter(
             Follow.follower_id == current_user.id,
-            Follow.following_id == user.id
-        ).first() is not None
-        
-        result.append(FollowerInfo(
-            id=user.id,
-            username=user.username,
-            profile_picture=profile.profile_picture if profile else None,
-            is_following=is_following
-        ))
-    
-    return result
+            Follow.following_id.in_(following_ids)
+        )
+        .all()
+    )
+
+    return [
+        FollowerInfo(
+            id=row.id,
+            username=row.username,
+            profile_picture=row.profile_picture,
+            is_following=row.id in mutual_lookup
+        )
+        for row in rows
+    ]
 
 # ============ STORIES ============
 @router.post("/stories", response_model=StoryResponse, status_code=status.HTTP_201_CREATED)
@@ -435,8 +447,9 @@ async def create_story(
     # Save media file (image or video)
     filename, media_type = await save_media_file(media, "stories")
     
-    # Stories expire after 24 hours
-    expires_at = datetime.utcnow() + timedelta(hours=24)
+    # Stories expire after 5 minutes (testing window)
+    # Change to timedelta(hours=24) for production usage
+    expires_at = datetime.utcnow() + timedelta(minutes=5)
     
     # Create story
     db_story = Story(
@@ -450,7 +463,7 @@ async def create_story(
     db.commit()
     db.refresh(db_story)
     
-    return get_story_with_details(db_story, db)
+    return get_story_with_details(db_story, db, current_user_id=current_user.id, include_viewers=True)
 
 @router.get("/stories", response_model=List[StoryResponse])
 def get_stories(
@@ -470,7 +483,14 @@ def get_stories(
         Story.expires_at > now
     ).order_by(Story.timestamp).all()  # Oldest first
     
-    return [get_story_with_details(story, db) for story in stories]
+    return [
+        get_story_with_details(
+            story,
+            db,
+            current_user_id=current_user.id
+        )
+        for story in stories
+    ]
 
 @router.get("/stories/user/{user_id}", response_model=List[StoryResponse])
 def get_user_stories(
@@ -499,7 +519,103 @@ def get_user_stories(
         Story.expires_at > now
     ).order_by(Story.timestamp).all()  # Oldest first
     
-    return [get_story_with_details(story, db) for story in stories]
+    include_owner_views = user_id == current_user.id
+    return [
+        get_story_with_details(
+            story,
+            db,
+            current_user_id=current_user.id,
+            include_viewers=include_owner_views
+        )
+        for story in stories
+    ]
+
+
+@router.post("/stories/{story_id}/view", status_code=status.HTTP_204_NO_CONTENT)
+def mark_story_viewed(
+    story_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Track when a user views a story."""
+    story = db.query(Story).filter(Story.id == story_id).first()
+    
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+    
+    if story.expires_at <= datetime.utcnow():
+        raise HTTPException(status_code=410, detail="Story has expired")
+    
+    if story.user_id != current_user.id:
+        is_following = db.query(Follow).filter(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == story.user_id
+        ).first()
+        
+        if not is_following:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only view stories from users you follow"
+            )
+    
+    if story.user_id == current_user.id:
+        return None
+    
+    view_exists = db.query(StoryView).filter(
+        StoryView.story_id == story_id,
+        StoryView.viewer_id == current_user.id
+    ).first()
+    
+    if view_exists:
+        return None
+    
+    db_view = StoryView(
+        story_id=story_id,
+        viewer_id=current_user.id
+    )
+    db.add(db_view)
+    db.commit()
+    
+    return None
+
+
+@router.get("/stories/{story_id}/views", response_model=List[StoryViewer])
+def get_story_viewers(
+    story_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Return users who viewed a story (only accessible to the story owner)."""
+    story = db.query(Story).filter(Story.id == story_id).first()
+    
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+    
+    if story.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the story owner can view viewers"
+        )
+    
+    views = (
+        db.query(StoryView, User, Profile)
+        .join(User, StoryView.viewer_id == User.id)
+        .outerjoin(Profile, Profile.user_id == User.id)
+        .filter(StoryView.story_id == story_id)
+        .order_by(StoryView.viewed_at.desc())
+        .all()
+    )
+    
+    result = []
+    for view, viewer_user, viewer_profile in views:
+        result.append(StoryViewer(
+            id=viewer_user.id,
+            username=viewer_user.username,
+            profile_picture=viewer_profile.profile_picture if viewer_profile else None,
+            viewed_at=view.viewed_at
+        ))
+    
+    return result
 
 @router.put("/stories/{story_id}", response_model=StoryResponse)
 def update_story(
@@ -524,7 +640,12 @@ def update_story(
     db.commit()
     db.refresh(story)
     
-    return get_story_with_details(story, db)
+    return get_story_with_details(
+        story,
+        db,
+        current_user_id=current_user.id,
+        include_viewers=True
+    )
 
 @router.delete("/stories/{story_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_story(
@@ -599,8 +720,13 @@ def get_comment_with_details(comment: Comment, db: Session):
     
     return CommentResponse(**comment_dict)
 
-def get_story_with_details(story: Story, db: Session):
-    """Get story with user details"""
+def get_story_with_details(
+    story: Story,
+    db: Session,
+    current_user_id: Optional[int] = None,
+    include_viewers: bool = False
+):
+    """Get story with user details, view counts, and optional viewer list."""
     user = db.query(User).filter(User.id == story.user_id).first()
     profile = db.query(Profile).filter(Profile.user_id == story.user_id).first()
     
@@ -617,6 +743,39 @@ def get_story_with_details(story: Story, db: Session):
             }
         }
     
+    if current_user_id == story.user_id:
+        include_viewers = True
+        has_viewed = True
+    else:
+        has_viewed = False
+        if current_user_id:
+            has_viewed = db.query(StoryView.id).filter(
+                StoryView.story_id == story.id,
+                StoryView.viewer_id == current_user_id
+            ).first() is not None
+    
+    viewers = []
+    if include_viewers:
+        view_rows = (
+            db.query(StoryView, User, Profile)
+            .join(User, StoryView.viewer_id == User.id)
+            .outerjoin(Profile, Profile.user_id == User.id)
+            .filter(StoryView.story_id == story.id)
+            .order_by(StoryView.viewed_at.desc())
+            .all()
+        )
+        views_count = len(view_rows)
+        
+        for view, viewer_user, viewer_profile in view_rows:
+            viewers.append({
+                "id": viewer_user.id,
+                "username": viewer_user.username,
+                "profile_picture": viewer_profile.profile_picture if viewer_profile else None,
+                "viewed_at": view.viewed_at
+            })
+    else:
+        views_count = db.query(StoryView.id).filter(StoryView.story_id == story.id).count()
+    
     story_dict = {
         "id": story.id,
         "user_id": story.user_id,
@@ -625,7 +784,10 @@ def get_story_with_details(story: Story, db: Session):
         "caption": story.caption,
         "timestamp": story.timestamp,
         "expires_at": story.expires_at,
-        "user": user_info
+        "user": user_info,
+        "views_count": views_count,
+        "has_viewed": has_viewed,
+        "viewers": viewers
     }
     
     return StoryResponse(**story_dict)

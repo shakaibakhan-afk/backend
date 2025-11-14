@@ -18,7 +18,7 @@ class CommentResponse(CommentBase):
     timestamp: datetime
     username: Optional[str] = None
     user_profile_picture: Optional[str] = None
-    replies: List['CommentResponse'] = []  # Nested replies (1 level only)
+    replies: List['CommentResponse'] = Field(default_factory=list)  # Nested replies (1 level only)
     replies_count: int = 0
     
     class Config:
@@ -85,7 +85,23 @@ class StoryResponse(StoryBase):
     timestamp: datetime
     expires_at: datetime
     user: Optional[StoryUserInfo] = None
+    views_count: int = 0
+    has_viewed: bool = False
+    viewers: List['StoryViewer'] = Field(default_factory=list)
     
     class Config:
         from_attributes = True
+
+
+class StoryViewer(BaseModel):
+    id: int
+    username: str
+    profile_picture: Optional[str] = None
+    viewed_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+StoryResponse.model_rebuild()
 

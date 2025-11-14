@@ -23,6 +23,7 @@ class User(Base):
     likes = relationship("Like", back_populates="user", cascade="all, delete-orphan")
     stories = relationship("Story", back_populates="user", cascade="all, delete-orphan")
     notifications = relationship("Notification", back_populates="recipient", cascade="all, delete-orphan")
+    story_views = relationship("StoryView", back_populates="viewer", cascade="all, delete-orphan")
     
     # Following/Followers
     following = relationship(
