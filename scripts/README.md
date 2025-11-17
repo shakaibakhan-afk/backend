@@ -4,9 +4,25 @@ This folder contains utility scripts for the Instagram Clone backend.
 
 ## Available Scripts
 
+### Server Startup
+
+- **`start_server.bat`** / **`start_server.ps1`** - Start the FastAPI backend server
+  ```bash
+  # Windows (Batch)
+  scripts\start_server.bat
+  
+  # Windows (PowerShell)
+  scripts\start_server.ps1
+  ```
+
 ### Database & Migrations
 
-- **`run_seed.py`** - Non-interactive database seeding script
+- **`seed_data.py`** - Interactive database seeding script (asks for confirmation)
+  ```bash
+  python scripts/seed_data.py
+  ```
+
+- **`run_seed.py`** - Non-interactive database seeding script (auto-confirms)
   ```bash
   python scripts/run_seed.py
   ```

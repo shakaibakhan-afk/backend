@@ -36,6 +36,17 @@ cp .env.example .env
 
 ## Running the Application
 
+**Option 1: Using the startup script (Recommended)**
+```bash
+cd backend
+# Windows (Batch)
+scripts\start_server.bat
+
+# Windows (PowerShell)
+scripts\start_server.ps1
+```
+
+**Option 2: Manual start**
 ```bash
 cd backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -46,23 +57,51 @@ The API will be available at:
 - Interactive API docs: http://localhost:8000/docs
 - Alternative API docs: http://localhost:8000/redoc
 
+**Note:** All utility scripts are located in the `scripts/` folder. See `scripts/README.md` for details.
+
 ## Background Workers (Celery)
 
 Some features (notifications, story cleanup) are processed asynchronously.  
 Start Redis (or whichever broker/backend you configured) and run:
 
+**Using scripts (Recommended):**
 ```bash
 # Terminal 1 – Celery worker
-celery -A celery_app worker --loglevel=info
+# Linux/Mac
+./scripts/start_celery_worker.sh
+
+# Windows
+scripts\start_celery_worker.bat
 
 # Terminal 2 – Celery beat scheduler
-celery -A celery_app beat --loglevel=info
+# Linux/Mac
+./scripts/start_celery_beat.sh
+
+# Windows
+scripts\start_celery_beat.bat
+```
+
+**Manual start:**
+```bash
+# Terminal 1 – Celery worker
+celery -A app.celery_app worker --loglevel=info
+
+# Terminal 2 – Celery beat scheduler
+celery -A app.celery_app beat --loglevel=info
 ```
 
 You can monitor tasks with Flower:
 
 ```bash
-celery -A celery_app flower --port=5555
+# Using script
+# Linux/Mac
+./scripts/start_flower.sh
+
+# Windows
+scripts\start_flower.bat
+
+# Or manually
+celery -A app.celery_app flower --port=5555
 ```
 
 ## Database Migrations (Alembic)

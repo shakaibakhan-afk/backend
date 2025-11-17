@@ -1,15 +1,17 @@
+#Requires -Version 5.1
 # Instagram Clone Backend Server Startup Script
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Instagram Clone Backend Server" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Change to script directory
+# Change to backend directory (parent of scripts folder)
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $scriptDir
+$backendDir = Split-Path -Parent $scriptDir
+Set-Location $backendDir
 
 # Check if venv exists
-$venvPython = Join-Path $scriptDir "venv\Scripts\python.exe"
+$venvPython = Join-Path $backendDir "venv\Scripts\python.exe"
 if (-not (Test-Path $venvPython)) {
     Write-Host "ERROR: Virtual environment not found!" -ForegroundColor Red
     Write-Host "Please create it first: python -m venv venv" -ForegroundColor Yellow

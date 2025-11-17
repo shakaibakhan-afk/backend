@@ -5,8 +5,6 @@ import os
 
 from app.routers import users, posts, social, notifications
 
-# Note: Database tables are created via Alembic migrations
-# DO NOT use Base.metadata.create_all() - it bypasses migration system
 
 app = FastAPI(
     title="Instagram Clone API",
@@ -14,13 +12,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS configuration - Must be before mounting static files
-# Restrict to only necessary methods and headers for security
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173", 
-        "http://localhost:5174",  # Alternative Vite port
+        "http://localhost:5174",
         "http://localhost:3000", 
         "http://127.0.0.1:5173",
         "http://127.0.0.1:5174"
@@ -31,15 +27,11 @@ app.add_middleware(
     expose_headers=["Content-Type", "X-Total-Count"]
 )
 
-# Create uploads directory if it doesn't exist
 os.makedirs("uploads/posts", exist_ok=True)
 os.makedirs("uploads/profiles", exist_ok=True)
 os.makedirs("uploads/stories", exist_ok=True)
 
-# Mount static files
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
-# Include routers
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(posts.router, prefix="/api/posts", tags=["posts"])
 app.include_router(social.router, prefix="/api/social", tags=["social"])

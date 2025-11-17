@@ -1,17 +1,18 @@
 """
 Seed script to populate database with sample data
-Run: python seed_data.py
+Run: python scripts/seed_data.py
+or: python scripts/run_seed.py (non-interactive)
 """
 
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
-# Add parent directory to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, backend_dir)
 
-from app.core.database import SessionLocal, engine, Base
+from app.core.database import SessionLocal
 from app.models.user import User, Profile
 from app.models.post import Post, Tag
 from app.models.social import Comment, Like, Follow, Story
@@ -21,7 +22,6 @@ def clear_database(db: Session):
     """Clear all data from database"""
     print("🗑️  Clearing existing data...")
     
-    # Delete in correct order (respect foreign keys)
     db.query(Comment).delete()
     db.query(Like).delete()
     db.query(Follow).delete()
@@ -78,18 +78,16 @@ def create_users(db: Session):
     
     users = []
     for user_data in users_data:
-        # Create user
         user = User(
             username=user_data["username"],
             email=user_data["email"],
-            hashed_password=get_password_hash(user_data["password"]),
+            password_hash=get_password_hash(user_data["password"]),
             is_active=True
         )
         db.add(user)
         db.commit()
         db.refresh(user)
         
-        # Create profile
         profile = Profile(
             user_id=user.id,
             bio=user_data["bio"],
@@ -199,7 +197,7 @@ def create_posts(db: Session, users: list):
             caption=post_data["caption"],
             image=post_data["image"],
             is_published=True,
-            timestamp=datetime.utcnow() - timedelta(days=10-i)
+            timestamp=datetime.now(timezone.utc) - timedelta(days=10-i)
         )
         db.add(post)
         db.commit()
@@ -234,13 +232,11 @@ def create_tags(db: Session, posts: list):
     }
     
     for tag_name, tag_posts in tags_data.items():
-        # Create tag
         tag = Tag(name=tag_name)
         db.add(tag)
         db.commit()
         db.refresh(tag)
         
-        # Associate with posts
         for post in tag_posts:
             post.tags.append(tag)
         
@@ -339,7 +335,7 @@ def create_stories(db: Session, users: list):
     ]
     
     for story_data in stories_data:
-        timestamp = datetime.utcnow() - timedelta(hours=story_data["hours_ago"])
+        timestamp = datetime.now(timezone.utc) - timedelta(hours=story_data["hours_ago"])
         expires_at = timestamp + timedelta(hours=24)
         
         story = Story(
@@ -393,20 +389,15 @@ def main():
     print("🌱 INSTAGRAM CLONE - DATABASE SEEDING")
     print("="*50)
     
-    # Create database session
     db = SessionLocal()
     
     try:
-        # Ask for confirmation
         response = input("\n⚠️  This will clear all existing data. Continue? (yes/no): ")
         if response.lower() != 'yes':
             print("❌ Seeding cancelled.")
             return
         
-        # Clear existing data
         clear_database(db)
-        
-        # Create sample data
         users = create_users(db)
         create_follows(db, users)
         posts = create_posts(db, users)

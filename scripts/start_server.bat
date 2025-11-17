@@ -4,8 +4,8 @@ echo Instagram Clone Backend Server
 echo ========================================
 echo.
 
-REM Change to script directory
-cd /d "%~dp0"
+REM Change to backend directory (parent of scripts folder)
+cd /d "%~dp0.."
 
 REM Check if venv exists
 if not exist "venv\Scripts\python.exe" (

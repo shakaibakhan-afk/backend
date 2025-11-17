@@ -17,15 +17,13 @@ router = APIRouter()
 async def create_post(
     caption: Optional[str] = Form(None),
     image: UploadFile = File(...),
-    tags: Optional[str] = Form(None),  # Comma-separated tags
+    tags: Optional[str] = Form(None),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Create a new post"""
-    # Save image
     filename = await save_upload_file(image, "posts")
     
-    # Create post
     db_post = Post(
         user_id=current_user.id,
         caption=caption,
@@ -36,18 +34,15 @@ async def create_post(
     db.commit()
     db.refresh(db_post)
     
-    # Handle tags
     if tags:
         tag_names = [tag.strip().lower() for tag in tags.split(",") if tag.strip()]
         for tag_name in tag_names:
-            # Get or create tag
             db_tag = db.query(Tag).filter(Tag.name == tag_name).first()
             if not db_tag:
                 db_tag = Tag(name=tag_name)
                 db.add(db_tag)
                 db.commit()
                 db.refresh(db_tag)
-            # Associate tag with post
             db_post.tags.append(db_tag)
         db.commit()
     
@@ -63,12 +58,9 @@ def get_posts(
     """Get posts from followed users only (personalized feed)"""
     from app.models.social import Follow
     
-    # Get users that current user follows
     following_ids = db.query(Follow.following_id).filter(Follow.follower_id == current_user.id).all()
     following_ids = [fid[0] for fid in following_ids]
-    following_ids.append(current_user.id)  # Include current user's posts
-    
-    # Only show posts from followed users
+    following_ids.append(current_user.id)
     posts = db.query(Post).filter(
         Post.user_id.in_(following_ids),
         Post.is_published == True
@@ -85,11 +77,9 @@ def get_following_posts(
 ):
     """Get posts from users that current user follows"""
     from app.models.social import Follow
-    
-    # Get users that current user follows
     following_ids = db.query(Follow.following_id).filter(Follow.follower_id == current_user.id).all()
     following_ids = [fid[0] for fid in following_ids]
-    following_ids.append(current_user.id)  # Include current user's posts
+    following_ids.append(current_user.id)
     
     posts = db.query(Post).filter(
         Post.user_id.in_(following_ids),
@@ -111,8 +101,6 @@ def get_post(
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     
-    # Check if user is authorized to view this post
-    # User can view if: 1) It's their own post, or 2) They follow the post owner
     if post.user_id != current_user.id:
         is_following = db.query(Follow).filter(
             Follow.follower_id == current_user.id,
@@ -138,8 +126,6 @@ def get_user_posts(
     """Get posts by a specific user (only if followed or own profile)"""
     from app.models.social import Follow
     
-    # Check if user is authorized to view this user's posts
-    # User can view if: 1) It's their own profile, or 2) They follow this user
     if user_id != current_user.id:
         is_following = db.query(Follow).filter(
             Follow.follower_id == current_user.id,
@@ -175,15 +161,11 @@ def update_post(
     if post.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to update this post")
     
-    # Update caption
     if post_data.caption is not None:
         post.caption = post_data.caption
     
-    # Update tags
     if post_data.tags is not None:
-        # Clear existing tags
         post.tags = []
-        # Add new tags
         for tag_name in post_data.tags:
             tag_name = tag_name.strip().lower()
             if tag_name:
@@ -215,10 +197,8 @@ def delete_post(
     if post.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to delete this post")
     
-    # Delete image file
     delete_file(post.image, "posts")
     
-    # Delete post (cascade will handle comments and likes)
     db.delete(post)
     db.commit()
     

@@ -34,7 +34,6 @@ router = APIRouter()
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
 def register(user_data: UserCreate, db: Session = Depends(get_db)):
     """Register a new user"""
-    # Check if user exists
     existing_user = db.query(User).filter(
         (User.username == user_data.username) | (User.email == user_data.email)
     ).first()
@@ -45,7 +44,6 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
             detail="Username or email already registered"
         )
     
-    # Create user
     hashed_password = get_password_hash(user_data.password)
     db_user = User(
         username=user_data.username,
@@ -56,17 +54,13 @@ def register(user_data: UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_user)
     
-    # Create profile
     profile = Profile(user_id=db_user.id)
     db.add(profile)
     db.commit()
     db.refresh(profile)
     
-    # Create access and refresh tokens
     access_token = create_access_token(data={"sub": str(db_user.id)})
     refresh_token = create_refresh_token(data={"sub": str(db_user.id)})
-    
-    # Get user with profile
     user_response = get_user_with_stats(db_user, db)
     
     return Token(access_token=access_token, refresh_token=refresh_token, user=user_response)
@@ -89,11 +83,8 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
             detail="Inactive user"
         )
     
-    # Create access and refresh tokens
     access_token = create_access_token(data={"sub": str(user.id)})
     refresh_token = create_refresh_token(data={"sub": str(user.id)})
-    
-    # Get user with profile
     user_response = get_user_with_stats(user, db)
     
     return Token(access_token=access_token, refresh_token=refresh_token, user=user_response)
@@ -110,7 +101,6 @@ def refresh_access_token(refresh_data: RefreshTokenRequest, db: Session = Depend
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Get user
     user = db.query(User).filter(User.id == int(user_id)).first()
     if not user or not user.is_active:
         raise HTTPException(
@@ -118,11 +108,8 @@ def refresh_access_token(refresh_data: RefreshTokenRequest, db: Session = Depend
             detail="User not found or inactive"
         )
     
-    # Create new access and refresh tokens
     access_token = create_access_token(data={"sub": str(user.id)})
     refresh_token = create_refresh_token(data={"sub": str(user.id)})
-    
-    # Get user with profile
     user_response = get_user_with_stats(user, db)
     
     return Token(access_token=access_token, refresh_token=refresh_token, user=user_response)
@@ -173,7 +160,6 @@ def update_profile(
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
     
-    # Update profile fields
     for field, value in profile_data.dict(exclude_unset=True).items():
         setattr(profile, field, value)
     
@@ -194,11 +180,9 @@ async def upload_profile_picture(
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
     
-    # Delete old profile picture
     if profile.profile_picture:
         delete_file(profile.profile_picture, "profiles")
     
-    # Save new picture
     filename = await save_upload_file(file, "profiles")
     profile.profile_picture = filename
     
