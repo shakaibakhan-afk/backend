@@ -30,7 +30,7 @@ celery_app.conf.update(
 celery_app.conf.beat_schedule = {
     "cleanup-expired-stories": {
         "task": "app.tasks.stories.cleanup_expired_stories",
-        "schedule": crontab(minute="*/1"),  # every minute to enforce 5-minute expiry
+        "schedule": crontab(minute="*/10"),  # every 10 minutes (stories expire after 24 hours)
     },
     "cleanup-old-notifications": {
         "task": "app.tasks.notifications.cleanup_old_notifications",

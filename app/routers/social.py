@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.core.database import get_db
 from app.core.security import get_current_active_user
+from app.core.config import settings
 from app.models.user import User, Profile
 from app.models.post import Post
 from app.models.social import Comment, Like, Follow, Story, StoryView
@@ -447,9 +448,8 @@ async def create_story(
     # Save media file (image or video)
     filename, media_type = await save_media_file(media, "stories")
     
-    # Stories expire after 5 minutes (testing window)
-    # Change to timedelta(hours=24) for production usage
-    expires_at = datetime.utcnow() + timedelta(minutes=5)
+    # Use configurable story expiry from settings
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.STORY_EXPIRY_HOURS)
     
     # Create story
     db_story = Story(
@@ -477,7 +477,7 @@ def get_stories(
     following_ids.append(current_user.id)  # Include current user's stories
     
     # Get active stories (ordered oldest first, like Instagram)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     stories = db.query(Story).filter(
         Story.user_id.in_(following_ids),
         Story.expires_at > now
@@ -513,7 +513,7 @@ def get_user_stories(
                 detail="You can only view stories from users you follow"
             )
     
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     stories = db.query(Story).filter(
         Story.user_id == user_id,
         Story.expires_at > now
@@ -543,7 +543,7 @@ def mark_story_viewed(
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
     
-    if story.expires_at <= datetime.utcnow():
+    if story.expires_at <= datetime.now(timezone.utc):
         raise HTTPException(status_code=410, detail="Story has expired")
     
     if story.user_id != current_user.id:

@@ -3,11 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 
-from app.core.database import engine, Base
 from app.routers import users, posts, social, notifications
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
+# Note: Database tables are created via Alembic migrations
+# DO NOT use Base.metadata.create_all() - it bypasses migration system
 
 app = FastAPI(
     title="Instagram Clone API",
@@ -16,6 +15,7 @@ app = FastAPI(
 )
 
 # CORS configuration - Must be before mounting static files
+# Restrict to only necessary methods and headers for security
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -26,9 +26,9 @@ app.add_middleware(
         "http://127.0.0.1:5174"
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"]
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept"],
+    expose_headers=["Content-Type", "X-Total-Count"]
 )
 
 # Create uploads directory if it doesn't exist

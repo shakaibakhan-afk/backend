@@ -1,7 +1,7 @@
 """
 Celery tasks related to notifications.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from app.celery_app import celery_app
@@ -30,6 +30,9 @@ def _store_notification(
         )
         db.add(db_notification)
         db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -92,7 +95,7 @@ def cleanup_old_notifications(days: int = 30) -> dict:
     """Delete notifications that are read and older than the specified amount of days."""
     db = SessionLocal()
     try:
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         deleted = (
             db.query(Notification)
             .filter(Notification.is_read.is_(True), Notification.timestamp < cutoff)
@@ -102,7 +105,7 @@ def cleanup_old_notifications(days: int = 30) -> dict:
         return {"status": "success", "deleted": deleted}
     except Exception as exc:  # pragma: no cover - logged by Celery
         db.rollback()
-        return {"status": "error", "message": str(exc)}
+        raise  # Re-raise to let Celery handle retries
     finally:
         db.close()
 

@@ -2,7 +2,7 @@
 Celery tasks related to stories (cleanup expired stories, delete media, etc.).
 """
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.celery_app import celery_app
 from app.core.database import SessionLocal
@@ -14,7 +14,7 @@ def cleanup_expired_stories() -> dict:
     """Delete expired stories and remove the associated media from disk."""
     db = SessionLocal()
     try:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expired = db.query(Story).filter(Story.expires_at <= now).all()
         removed = 0
 
@@ -32,7 +32,7 @@ def cleanup_expired_stories() -> dict:
         return {"status": "success", "removed": removed}
     except Exception as exc:  # pragma: no cover - logged by Celery
         db.rollback()
-        return {"status": "error", "message": str(exc)}
+        raise  # Re-raise to let Celery handle retries
     finally:
         db.close()
 
